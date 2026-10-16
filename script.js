@@ -724,10 +724,10 @@
     w.document.close();
   });
 
-  // ---------- ロゴのドラッグ移動・リサイズ ----------
-  const HANDLE_R = CARD_W * 0.018;
-  let dragMode = null; // 'move' | 'resize' | null
-  let dragStart = null;
+  // ---------- ロゴのドラッグ移動・リサイズ（マウス/タッチ/ペン共通：Pointer Events） ----------
+  const logoMove = document.getElementById('logoMove');
+  const logoHandle = document.getElementById('logoHandle');
+  let drag = null; // { mode:'move'|'resize', px, py, rect, aspect }
 
   function toCardCoords(evt){
     const rect = overlay.getBoundingClientRect();
@@ -738,63 +738,75 @@
   function drawOverlay(){
     octx.clearRect(0,0,CARD_W,CARD_H);
     const r = currentLogoRect();
-    if(!r) { overlay.style.cursor = 'default'; return; }
+    if(!r){
+      logoMove.style.display = 'none';
+      logoHandle.style.display = 'none';
+      return;
+    }
+    // 画面上の見た目の大きさが小さくなりすぎないよう、表示倍率に合わせて線・丸の太さを補正
+    const scale = (overlay.getBoundingClientRect().width || CARD_W) / CARD_W;
+    const handleR = Math.max(CARD_W * 0.018, 9 / scale);
     octx.save();
     octx.strokeStyle = '#29e0c4';
-    octx.lineWidth = 3;
+    octx.lineWidth = Math.max(3, 2 / scale);
     octx.setLineDash([10,7]);
     octx.strokeRect(r.x, r.y, r.w, r.h);
     octx.setLineDash([]);
     octx.fillStyle = '#29e0c4';
     octx.beginPath();
-    octx.arc(r.x + r.w, r.y + r.h, HANDLE_R, 0, Math.PI*2);
+    octx.arc(r.x + r.w, r.y + r.h, handleR, 0, Math.PI*2);
     octx.fill();
-    octx.strokeStyle = '#ffffff'; octx.lineWidth = 2; octx.stroke();
+    octx.strokeStyle = '#ffffff'; octx.lineWidth = Math.max(2, 1.5 / scale); octx.stroke();
     octx.restore();
+
+    // 操作用の透明な領域（ロゴ本体と右下ハンドル）を、カード表示に対する%で配置
+    logoMove.style.display = 'block';
+    logoMove.style.left = (r.x / CARD_W * 100) + '%';
+    logoMove.style.top = (r.y / CARD_H * 100) + '%';
+    logoMove.style.width = (r.w / CARD_W * 100) + '%';
+    logoMove.style.height = (r.h / CARD_H * 100) + '%';
+    logoHandle.style.display = 'block';
+    logoHandle.style.left = ((r.x + r.w) / CARD_W * 100) + '%';
+    logoHandle.style.top = ((r.y + r.h) / CARD_H * 100) + '%';
   }
 
-  overlay.addEventListener('mousedown', (evt) => {
+  function startDrag(mode, evt){
     const r = currentLogoRect();
     if(!r) return;
     const p = toCardCoords(evt);
-    const dHandle = Math.hypot(p.x - (r.x+r.w), p.y - (r.y+r.h));
-    if(dHandle <= HANDLE_R * 1.8){
-      dragMode = 'resize';
-    } else if(p.x >= r.x && p.x <= r.x+r.w && p.y >= r.y && p.y <= r.y+r.h){
-      dragMode = 'move';
-    } else {
-      dragMode = null;
-      return;
-    }
-    dragStart = { px:p.x, py:p.y, rect:{...r}, aspect: state.logoImg.width/state.logoImg.height };
+    drag = { mode, px:p.x, py:p.y, rect:{...r}, aspect: state.logoImg.width / state.logoImg.height };
+    evt.currentTarget.setPointerCapture(evt.pointerId);
     evt.preventDefault();
-  });
+    evt.stopPropagation();
+  }
 
-  window.addEventListener('mousemove', (evt) => {
+  function onDragMove(evt){
+    if(!drag) return;
     const r = currentLogoRect();
     if(!r) return;
-    if(!dragMode){
-      const p = toCardCoords(evt);
-      const dHandle = Math.hypot(p.x - (r.x+r.w), p.y - (r.y+r.h));
-      if(dHandle <= HANDLE_R*1.8) overlay.style.cursor = 'nwse-resize';
-      else if(p.x >= r.x && p.x <= r.x+r.w && p.y >= r.y && p.y <= r.y+r.h) overlay.style.cursor = 'move';
-      else overlay.style.cursor = 'default';
-      return;
-    }
     const p = toCardCoords(evt);
-    const dx = p.x - dragStart.px, dy = p.y - dragStart.py;
-    if(dragMode === 'move'){
-      r.x = dragStart.rect.x + dx;
-      r.y = dragStart.rect.y + dy;
-    } else if(dragMode === 'resize'){
-      let newW = Math.max(CARD_W*0.04, dragStart.rect.w + dx);
-      let newH = newW / dragStart.aspect;
-      r.w = newW; r.h = newH;
+    const dx = p.x - drag.px, dy = p.y - drag.py;
+    if(drag.mode === 'move'){
+      r.x = drag.rect.x + dx;
+      r.y = drag.rect.y + dy;
+    } else {
+      const newW = Math.max(CARD_W * 0.04, drag.rect.w + dx);
+      r.w = newW; r.h = newW / drag.aspect;
     }
     draw();
-  });
+  }
 
-  window.addEventListener('mouseup', () => { dragMode = null; dragStart = null; });
+  function endDrag(){ drag = null; }
+
+  logoMove.addEventListener('pointerdown', e => startDrag('move', e));
+  logoHandle.addEventListener('pointerdown', e => startDrag('resize', e));
+  [logoMove, logoHandle].forEach(el => {
+    el.addEventListener('pointermove', onDragMove);
+    el.addEventListener('pointerup', endDrag);
+    el.addEventListener('pointercancel', endDrag);
+  });
+  // 画面サイズが変わったら、ハンドルの大きさ補正をやり直す
+  window.addEventListener('resize', drawOverlay);
 
   function updateTemplateLabels(){
     [templateGridFront, templateGridBack].forEach((grid, gi) => {
